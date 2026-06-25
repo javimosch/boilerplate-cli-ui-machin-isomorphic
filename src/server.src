@@ -1,0 +1,100 @@
+// server.src — the native binary: a CLI that runs an HTTP server. It serves the
+// SSR HTML (first paint, works with no JS), its own wasm client, and a JSON API.
+// Composed with machweb + flags + models. Holds the authoritative vote state.
+
+var votes = []int{}
+
+func init_votes() {
+    seed := []int{5, 3, 2, 4}
+    i := 0
+    while i < n_opts() {
+        votes = append(votes, seed[i])
+        i = i + 1
+    }
+}
+
+func total_votes() (t) {
+    t = 0
+    i := 0
+    while i < n_opts() { t = t + votes[i]  i = i + 1 }
+}
+
+func leader_idx() (bi) {
+    bi = 0
+    bv := 0 - 1
+    i := 0
+    while i < n_opts() {
+        if votes[i] > bv { bv = votes[i]  bi = i }
+        i = i + 1
+    }
+}
+
+// ssr_app renders the poll server-side. The data-s span names match the client's
+// slots ("opt_0".."opt_3", "total", "leader"), so the wasm client hydrates this
+// exact DOM rather than re-rendering it.
+func ssr_app() (h) {
+    h = "<h1>Favorite language?</h1><div class=opts>"
+    i := 0
+    while i < n_opts() {
+        h = h + "<button class=opt data-opt=\"" + str(i) + "\">"
+        h = h + "<span class=lbl>" + opt_label(i) + "</span>"
+        h = h + "<span class=cnt><span data-s=\"opt_" + str(i) + "\">" + str(votes[i]) + "</span></span>"
+        h = h + "</button>"
+        i = i + 1
+    }
+    h = h + "</div><p class=foot>total <b><span data-s=\"total\">" + str(total_votes())
+    h = h + "</span></b> · leading <b><span data-s=\"leader\">" + opt_label(leader_idx()) + "</span></b></p>"
+}
+
+func page() (h) {
+    h = "<!doctype html><html lang=en><head><meta charset=utf-8>"
+    h = h + "<meta name=viewport content=\"width=device-width,initial-scale=1\">"
+    h = h + "<title>machin · isomorphic poll</title>" + styles() + "</head><body>"
+    h = h + "<main class=card><div id=app>" + ssr_app() + "</div></main>"
+    h = h + "<script>window.__SEED=[" + ints_csv(votes) + "]</script>"
+    h = h + "<script type=module>" + host_js() + "</script>"
+    h = h + "</body></html>"
+}
+
+// qval reads an integer query parameter (?key=N), or -1 if absent.
+func qval(path, key) (v) {
+    v = 0 - 1
+    i := index(path, key + "=")
+    if i >= 0 {
+        rest := substr(path, i + len(key) + 1, len(path))
+        amp := index(rest, "&")
+        if amp >= 0 { rest = substr(rest, 0, amp) }
+        v = parse_int(rest)
+    }
+}
+
+func handle(req) (res) {
+    if req.path == "/app.wasm" {
+        return ok_wasm(read_file_bytes("app.wasm"))   // one binary serves its own SPA
+    }
+    if has_prefix(req.path, "/api/vote") {
+        o := qval(req.path, "o")
+        if o >= 0 {
+            if o < n_opts() { votes[o] = votes[o] + 1 }
+        }
+        return ok_json("{\"ok\":true,\"results\":[" + ints_csv(votes) + "]}")
+    }
+    if has_prefix(req.path, "/api/results") {
+        return ok_json("[" + ints_csv(votes) + "]")
+    }
+    return ok_html(page())
+}
+
+func main() {
+    fs := new_flags("machin-poll")
+    fs = flag_int(fs, "port", "p", "48096", "HTTP port to listen on")
+    fs = parse_flags(fs, args())
+    if flag_on(fs, "help") {
+        println(flag_usage(fs))
+        return
+    }
+    init_votes()
+    port := flag_int_val(fs, "port")
+    println("machin · isomorphic poll on http://localhost:" + str(port))
+    serve(port, func(req) { return handle(req) })
+}

@@ -1,0 +1,16 @@
+// styles.src — server-only: the page CSS, as one string.
+func styles() (s) {
+    s = "<style>:root{color-scheme:dark}body{margin:0;min-height:100vh;display:grid;place-items:center;"
+    s = s + "font:16px/1.5 system-ui,sans-serif;color:#e6e6f0;background:radial-gradient(120% 120% at 50% 0%,#16122e 0%,#08080f 60%)}"
+    s = s + ".card{width:min(440px,92vw);padding:26px 30px 30px;border-radius:16px;background:#0f0f22;border:1px solid #2a2350;box-shadow:0 20px 60px -20px #000}"
+    s = s + "h1{margin:0 0 16px;font-size:19px;color:#9b8cff}"
+    s = s + ".opts{display:flex;flex-direction:column;gap:10px}"
+    s = s + ".opt{display:flex;align-items:center;gap:12px;padding:12px 16px;cursor:pointer;text-align:left;"
+    s = s + "border-radius:10px;border:1px solid #2c2660;background:#181534;color:#e6e6f0;font-size:16px;font-weight:700}"
+    s = s + ".opt:hover{background:#221d48;border-color:#4636a0}"
+    s = s + ".opt .lbl{flex:1}"
+    s = s + ".opt .cnt{font-size:22px;font-weight:800;min-width:36px;text-align:right;"
+    s = s + "background:linear-gradient(90deg,#66e0ff,#c98bff);-webkit-background-clip:text;background-clip:text;color:transparent}"
+    s = s + ".foot{margin-top:18px;font-size:13px;color:#8d86b8;text-align:center}.foot b{color:#cfc8ff}"
+    s = s + "</style>"
+}

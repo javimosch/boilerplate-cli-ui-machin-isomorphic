@@ -1,0 +1,20 @@
+// models.src — SHARED between the server and the wasm client (composed into both).
+// The poll's options and labels live here once, so the server (SSR) and the client
+// (reactive UI) agree on the data model. No per-app state here — just the schema.
+
+var poll_labels = []string{"machin", "Rust", "Go", "Zig"}
+
+func n_opts() (n) { n = 4 }
+
+func opt_label(i) (s) { s = poll_labels[i] }
+
+// ints_csv joins an int slice as "a,b,c" — used for the SSR seed and results JSON.
+func ints_csv(xs) (s) {
+    s = ""
+    i := 0
+    while i < len(xs) {
+        if i > 0 { s = s + "," }
+        s = s + str(xs[i])
+        i = i + 1
+    }
+}

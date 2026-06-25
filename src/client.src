@@ -1,0 +1,71 @@
+// client.src — the wasm client: a reactive poll UI. State and view logic live in
+// machin; the JS host only forwards clicks and applies patches. Composed with
+// reactive.src (signals/templating) + models.src (the schema), built to wasm.
+
+extern "env" {
+    fn api_vote(i32)        // tell the host to POST the vote to the server
+}
+
+var ver = 0                 // a version signal: bump on any vote
+var votes = []int{}         // per-option counts, seeded from the SSR page
+var total_sig = 0           // a computed signal's id
+
+func vote_at(i) (v) {
+    v = 0
+    if i < len(votes) { v = votes[i] }
+}
+
+func leader() (s) {
+    get(ver)
+    bi := 0
+    bv := 0 - 1
+    i := 0
+    while i < n_opts() {
+        if vote_at(i) > bv { bv = vote_at(i)  bi = i }
+        i = i + 1
+    }
+    s = opt_label(bi)
+}
+
+// seed is called once per option by the host, from the server-rendered counts.
+export func seed(i, v) {
+    while len(votes) <= i { votes = append(votes, 0) }
+    votes[i] = v
+}
+
+// opt_markup builds one option button. The captured `i` is per-call (a fresh
+// parameter), so each option's slot reads its own count.
+func opt_markup(i) (h) {
+    h = "<button class=opt data-opt=\"" + str(i) + "\">"
+    h = h + "<span class=lbl>" + opt_label(i) + "</span>"
+    h = h + "<span class=cnt>" + slot("opt_" + str(i), func() { get(ver)  return str(vote_at(i)) }) + "</span>"
+    h = h + "</button>"
+}
+
+export func start() {
+    ver = signal(0)
+    total_sig = computed(func() {
+        get(ver)
+        t := 0
+        i := 0
+        while i < n_opts() { t = t + vote_at(i)  i = i + 1 }
+        return t
+    })
+    // The server already rendered this markup (SSR); we HYDRATE — build the same
+    // component (which queues the bindings by their data-s names) and attach them to
+    // the existing DOM. No re-render, no flash. (For a non-SSR page, swap in mount.)
+    hydrate(
+        "<h1>Favorite language?</h1>" +
+        "<div class=opts>" + opt_markup(0) + opt_markup(1) + opt_markup(2) + opt_markup(3) + "</div>" +
+        "<p class=foot>total <b>" + slot("total", func() { return str(get(total_sig)) }) +
+        "</b> · leading <b>" + slot("leader", func() { return leader() }) + "</b></p>")
+}
+
+// vote optimistically updates local state (so the UI reacts instantly) and asks
+// the host to persist it to the server.
+export func vote(i) {
+    while len(votes) <= i { votes = append(votes, 0) }
+    votes[i] = vote_at(i) + 1
+    set(ver, get(ver) + 1)
+    api_vote(int(i))
+}
