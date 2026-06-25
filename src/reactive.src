@@ -233,6 +233,8 @@ var pend_lk = []func{}       // func() -> string (csv keys)
 var pend_li = []func{}       // func(int) -> string (item html)
 
 // slot returns the markup for a reactive text node and queues a binding for it.
+// The current value is embedded so mount paints filled markup (no empty flash),
+// and so an SSR server emitting the same markup hydrates without a re-render.
 func slot(name, compute) (markup) {
     pend_slot = append(pend_slot, name)
     pend_fn = append(pend_fn, compute)
@@ -247,10 +249,11 @@ func list(name, keys, item) (markup) {
     markup = "<div id=\"" + name + "\"></div>"
 }
 
-// hydrate activates the queued bindings/lists against an ALREADY-rendered DOM (the
-// server's SSR markup). The `html` arg is the markup the component built — only its
-// side effect (queuing slots/lists) matters; the DOM already exists, so it's not
-// re-inserted. The data-s/container names connect the bindings to the SSR elements.
+// hydrate activates the queued bindings/lists against an ALREADY-rendered DOM (an
+// SSR server's markup). The `html` arg is the markup the component built — only its
+// side effect (queuing slots/lists) matters; the DOM already exists, so it is not
+// re-inserted. The data-s / container names connect the bindings to the SSR
+// elements, so the page hydrates with no re-render or flash.
 func hydrate(html) {
     i := 0
     while i < len(pend_slot) {
@@ -269,8 +272,8 @@ func hydrate(html) {
     pend_li = []func{}
 }
 
-// mount sets the root element's HTML (client-side render), then activates the
-// queued bindings/lists. For server-rendered pages, use hydrate instead.
+// mount sets the root element's HTML (a client-side render), then activates the
+// queued bindings/lists. For a server-rendered page, use hydrate instead.
 func mount(root, html) {
     dom_mount(root, html)
     hydrate(html)
