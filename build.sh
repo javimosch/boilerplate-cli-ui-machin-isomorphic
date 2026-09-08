@@ -19,7 +19,7 @@ print('func host_js() (s) { s = ' + json.dumps(open('web/host.js').read()) + ' }
 PY
 
 # 3. native SERVER: machweb + flags + shared models + styles + server + the host.
-"$MACHIN" encode src/machweb.src src/flags.src src/models.src src/styles.src src/server.src src/host_gen.src > server.mfl
+"$MACHIN" encode src/sys.src src/machweb.src src/flags.src src/models.src src/styles.src src/cli.src src/guide.src src/server.src src/host_gen.src > server.mfl
 "$MACHIN" build server.mfl -o machin-poll
 echo "built ./machin-poll"
 echo "run:  ./machin-poll        (then open http://localhost:48096/)"

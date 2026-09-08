@@ -23,7 +23,19 @@ jobs:
         run: ./build.sh
 
       - name: Smoke test
-        run: ./machin-poll -version || ./machin-poll --help
+        run: ./machin-poll version
+
+
+      # The boilerplates are comparison instruments: they must all implement the
+      # same contract, or comparing their binary sizes is meaningless. This
+      # proves it instead of asserting it.
+      - name: Build the conformance harness
+        run: |
+          git clone --depth 1 https://github.com/javimosch/cli-spec-conformance /tmp/csc
+          (cd /tmp/csc && ./build.sh)
+
+      - name: Spec conformance
+        run: /tmp/csc/cli-spec-conformance check ./machin-poll --specs output,guide,daemon
 
       - name: Report binary size
         run: |

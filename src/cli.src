@@ -1,0 +1,208 @@
+// The agent-first command surface (https://cli-specs.intrane.fr):
+//   cli-output-spec  data on stdout, context on stderr, exit codes 80-119,
+//                    typed errors, help-json
+//   cli-guide-spec   `guide`, embedded in the binary
+//   cli-daemon-spec  `serve --host --port`, /_health, /_shutdown,
+//                    `daemon start|stop|status`
+
+func tool_name() (s) { s = "machin-poll" }
+func tool_version() (s) { s = "1.0.0" }
+
+func pid_path() (p) { p = "/tmp/machin-poll.pid" }
+func log_path() (p) { p = "/tmp/machin-poll.log" }
+
+// die emits a typed error on stdout and exits with the matching code. The exit
+// status and .error.code are the same number by construction (§2, §3).
+func die(code, etype, message, suggestion) {
+    recoverable := "false"
+    if code >= 100 {
+        if code <= 109 { recoverable = "true" }
+    }
+    out := "{\"ok\":false,\"error\":{\"code\":" + str(code)
+    out = out + ",\"type\":" + json(etype)
+    out = out + ",\"message\":" + json(message)
+    out = out + ",\"recoverable\":" + recoverable
+    out = out + ",\"suggestions\":[" + json(suggestion) + "]}}"
+    println(out)
+    exit(code)
+}
+
+func cli_has_flag(a, name) (f) {
+    f = false
+    for _, v := range a {
+        if v == name { f = true }
+    }
+}
+
+// cli_flag_value reads --name value, -name value or --name=value.
+func cli_flag_value(a, name, def) (val) {
+    val = def
+    i := 0
+    while i < len(a) {
+        if a[i] == name {
+            if i + 1 < len(a) { val = a[i + 1] }
+        }
+        pfx := name + "="
+        if len(a[i]) > len(pfx) {
+            if substr(a[i], 0, len(pfx)) == pfx {
+                val = substr(a[i], len(pfx), len(a[i]))
+            }
+        }
+        i = i + 1
+    }
+}
+
+// The host default MUST be loopback (cli-daemon-spec §1).
+func cli_host(a) (host) {
+    host = cli_flag_value(a, "--host", cli_flag_value(a, "-host", env("HOST")))
+    if host == "" { host = "127.0.0.1" }
+}
+
+func cli_port(a) (port) {
+    p := cli_flag_value(a, "--port", cli_flag_value(a, "-port", cli_flag_value(a, "-p", env("PORT"))))
+    if p == "" { p = "48096" }
+    port = parse_int(p)
+    if port <= 0 {
+        die(80, "bad_flag_value", "--port must be a number, got \"" + p + "\"",
+            "machin-poll serve --port 48096")
+    }
+}
+
+// ---- daemon lifecycle (cli-daemon-spec §4) ----
+//
+// /_health is the source of truth for liveness, not the pid file, which goes
+// stale when a process dies without cleaning up. Every subcommand is idempotent.
+
+func probe_health(port) (body) {
+    body = ""
+    status, b, err := http_get("http://127.0.0.1:" + str(port) + "/_health")
+    if len(err) > 0 { return }
+    if status != 200 { return }
+    body = b
+}
+
+// wait_healthy polls /_health (every 100ms, 5s total) instead of sleeping a
+// fixed amount — §4.
+func wait_healthy(port) (ok) {
+    ok = false
+    i := 0
+    while i < 50 {
+        if len(probe_health(port)) > 0 {
+            ok = true
+            return
+        }
+        sleep(100)
+        i = i + 1
+    }
+}
+
+func wait_gone(port) (ok) {
+    ok = false
+    i := 0
+    while i < 50 {
+        if len(probe_health(port)) == 0 {
+            ok = true
+            return
+        }
+        sleep(100)
+        i = i + 1
+    }
+}
+
+func shell(cmd) (code) {
+    c, o, e := exec(cmd)
+    _ = o
+    _ = e
+    code = c
+}
+
+// daemon_start is idempotent: if the port is already healthy it reports the
+// running instance and succeeds rather than racing a second process onto it.
+func daemon_start(host, port) {
+    if len(probe_health(port)) > 0 {
+        println("{\"ok\":true,\"running\":true,\"already_running\":true,\"port\":" + str(port) + "}")
+        return
+    }
+
+    // The server reads app.wasm from the working directory at request time, so
+    // the daemon must keep the directory it was started from.
+    self := args()[0]
+    shell("cd \"$(pwd)\" && nohup setsid " + self + " serve --host " + host + " --port " + str(port) +
+          " >> " + log_path() + " 2>&1 & echo $! > " + pid_path())
+
+    if wait_healthy(port) {
+        println("{\"ok\":true,\"running\":true,\"already_running\":false,\"pid\":" + str(read_pid()) +
+                ",\"port\":" + str(port) + ",\"log\":\"" + log_path() + "\"}")
+        return
+    }
+
+    shell("kill $(cat " + pid_path() + " 2>/dev/null) 2>/dev/null")
+    shell("rm -f " + pid_path())
+    die(100, "daemon_unhealthy",
+        "started but /_health never answered on port " + str(port) + " (see " + log_path() + ")",
+        "machin-poll serve --port " + str(port))
+}
+
+// daemon_stop is a no-op success when nothing is running.
+func daemon_stop(port) {
+    if len(probe_health(port)) == 0 {
+        shell("rm -f " + pid_path())
+        println("{\"ok\":true,\"running\":false,\"stopped\":false,\"port\":" + str(port) + "}")
+        return
+    }
+
+    hdrs := []string{}
+    token := env("SHUTDOWN_TOKEN")
+    if len(token) > 0 { hdrs = append(hdrs, "X-Shutdown-Token: " + token) }
+
+    status, body, err := http_request("POST", "http://127.0.0.1:" + str(port) + "/_shutdown", hdrs, "")
+    _ = body
+    if len(err) > 0 {
+        die(100, "shutdown_failed", "POST /_shutdown failed: " + err,
+            "machin-poll daemon status --port " + str(port))
+    }
+    if status != 200 {
+        die(100, "shutdown_refused", "POST /_shutdown returned " + str(status),
+            "set SHUTDOWN_TOKEN if the daemon is bound off-loopback")
+    }
+
+    if wait_gone(port) == false {
+        shell("kill $(cat " + pid_path() + " 2>/dev/null) 2>/dev/null")
+    }
+    shell("rm -f " + pid_path())
+    println("{\"ok\":true,\"running\":false,\"stopped\":true,\"port\":" + str(port) + "}")
+}
+
+// daemon_status only ever reads: it never carries the shutdown token.
+func daemon_status(port) {
+    if len(probe_health(port)) == 0 {
+        println("{\"ok\":true,\"running\":false,\"port\":" + str(port) + "}")
+        return
+    }
+    println("{\"ok\":true,\"running\":true,\"pid\":" + str(read_pid()) + ",\"port\":" + str(port) +
+            ",\"log\":\"" + log_path() + "\"}")
+}
+
+func read_pid() (pid) {
+    _, out, _ := exec("cat " + pid_path() + " 2>/dev/null")
+    pid = parse_int(trim(out))
+}
+
+func cli_usage() {
+    eprintln("machin-poll - an isomorphic machin app: one binary, a wasm UI")
+    eprintln("")
+    eprintln("usage: machin-poll <command> [options]")
+    eprintln("")
+    eprintln("commands:")
+    eprintln("  serve [--host H] [--port N]   run the HTTP server in the foreground")
+    eprintln("  daemon start [--port N]       start it in the background")
+    eprintln("  daemon stop [--port N]        stop the background server")
+    eprintln("  daemon status [--port N]      report background server status")
+    eprintln("  guide [--human]               the embedded operator guide")
+    eprintln("  help-json                     machine-readable command catalog")
+    eprintln("  version [--json]              print the version")
+    eprintln("  help                          show this help")
+    eprintln("")
+    eprintln("endpoints: GET /  GET /app.wasm  GET /api/results  GET /_health  POST /_shutdown")
+    eprintln("exit codes: 0 ok, 80-89 input, 90-99 state, 100-109 external, 110-119 internal")
+}

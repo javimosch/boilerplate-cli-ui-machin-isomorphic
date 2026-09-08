@@ -140,14 +140,40 @@ func machweb_handle(conn, handler) {
     close(conn)
 }
 
-// serve runs the HTTP server. Each connection is handled in its own goroutine.
+// serve runs the HTTP server on loopback. Each connection is handled in its own
+// goroutine.
 func serve(port, handler) {
-    server := listen(port)
-    println("machweb on http://localhost:" + str(port))
+    serve_on("127.0.0.1", port, handler)
+}
+
+// serve_on binds a SPECIFIC address. listen(port) hardcodes INADDR_ANY, so a
+// server asked to serve localhost would still be reachable from the whole
+// network — cli-daemon-spec §1 requires the bind address to be what was asked
+// for, with loopback as the default.
+func serve_on(host, port, handler) {
+    server := listen_on(host, port)
+    if server < 0 {
+        // listen_on returns -1 rather than exiting; without this guard the
+        // accept loop below spins on a bad fd.
+        eprintln("machweb: cannot bind " + host + ":" + str(port))
+        exit(90)
+    }
+    eprintln("machweb on http://" + host + ":" + str(port))
     for {
         conn := accept(server)
         go machweb_handle(conn, handler)
     }
+}
+
+// eprintln writes a line to the real stderr. MFL has no stderr builtin and
+// write_file("/dev/stderr", …) opens with O_TRUNC, losing every line but the
+// last when stderr is redirected to a file.
+func eprintln(s) {
+    q := replace(s, "'", "'\\''")
+    c, o, e := exec("printf '%s\\n' '" + q + "' >> /proc/$PPID/fd/2")
+    _ = c
+    _ = o
+    _ = e
 }
 
 // ---- map-based router ----

@@ -68,7 +68,57 @@ func qval(path, key) (v) {
     }
 }
 
+// bound_host records what serve actually bound. /_shutdown is token-gated
+// whenever it is not loopback (cli-daemon-spec §3).
+var bound_host = "127.0.0.1"
+
+func is_loopback(h) (ok) {
+    ok = false
+    if h == "127.0.0.1" { ok = true }
+    if h == "localhost" { ok = true }
+    if h == "::1" { ok = true }
+}
+
+func shutdown_authorized(req) (ok) {
+    if is_loopback(bound_host) {
+        ok = true
+        return
+    }
+    token := env("SHUTDOWN_TOKEN")
+    ok = false
+    if len(token) == 0 { return }
+    ok = req.headers["x-shutdown-token"] == token
+}
+
 func handle(req) (res) {
+    // ---- daemon lifecycle (cli-daemon-spec §2, §3) ----
+    if has_prefix(req.path, "/_health") {
+        // Open and cheap: liveness only, no dependency checks.
+        return ok_json("{\"ok\":true,\"service\":\"machin-poll\",\"pid\":" + str(getpid()) + "}")
+    }
+    if has_prefix(req.path, "/_shutdown") {
+        if req.method != "POST" {
+            return response("405 Method Not Allowed", "application/json",
+                "{\"ok\":false,\"error\":{\"code\":85,\"type\":\"method_not_allowed\",\"message\":\"POST /_shutdown\",\"recoverable\":false}}")
+        }
+        if shutdown_authorized(req) == false {
+            // 403, and the process MUST NOT stop.
+            return response("403 Forbidden", "application/json",
+                "{\"ok\":false,\"error\":{\"code\":90,\"type\":\"forbidden\",\"message\":\"X-Shutdown-Token required when bound off-loopback\",\"recoverable\":false}}")
+        }
+        // Answered by the caller's connection before the process goes away.
+        go shutdown_soon()
+        return ok_json("{\"ok\":true,\"stopping\":true}")
+    }
+
+    // ---- the guide over HTTP (cli-guide-spec §3) ----
+    if has_prefix(req.path, "/guide") {
+        return ok_json(guide_json())
+    }
+    if has_prefix(req.path, "/llms.txt") {
+        return response("200 OK", "text/plain; charset=utf-8", llms_txt())
+    }
+
     if req.path == "/app.wasm" {
         return ok_wasm(read_file_bytes("app.wasm"))   // one binary serves its own SPA
     }
@@ -85,16 +135,74 @@ func handle(req) (res) {
     return ok_html(page())
 }
 
+// shutdown_soon lets the /_shutdown response reach the caller before the
+// process exits.
+func shutdown_soon() {
+    sleep(50)
+    shell("rm -f " + pid_path())
+    exit(0)
+}
+
+func run_server(host, port) {
+    init_votes()
+    bound_host = host
+    eprintln("machin · isomorphic poll on http://" + host + ":" + str(port))
+    serve_on(host, port, func(req) { return handle(req) })
+}
+
 func main() {
-    fs := new_flags("machin-poll")
-    fs = flag_int(fs, "port", "p", "48096", "HTTP port to listen on")
-    fs = parse_flags(fs, args())
-    if flag_on(fs, "help") {
-        println(flag_usage(fs))
+    a := args()
+    cmd := "help"
+    if len(a) > 1 { cmd = a[1] }
+
+    if cmd == "serve" {
+        run_server(cli_host(a), cli_port(a))
         return
     }
-    init_votes()
-    port := flag_int_val(fs, "port")
-    println("machin · isomorphic poll on http://localhost:" + str(port))
-    serve(port, func(req) { return handle(req) })
+
+    if cmd == "daemon" {
+        sub := ""
+        if len(a) > 2 { sub = a[2] }
+        if sub == "start" {
+            daemon_start(cli_host(a), cli_port(a))
+        } else if sub == "stop" {
+            daemon_stop(cli_port(a))
+        } else if sub == "status" {
+            daemon_status(cli_port(a))
+        } else {
+            die(85, "unknown_command", "unknown daemon subcommand \"" + sub + "\"",
+                "machin-poll daemon status")
+        }
+        return
+    }
+
+    if cmd == "guide" {
+        if cli_has_flag(a, "--human") {
+            println(guide_markdown())
+        } else {
+            println(guide_json())
+        }
+        return
+    }
+
+    if cmd == "help-json" {
+        println(help_json())
+        return
+    }
+
+    if cmd == "version" {
+        if cli_has_flag(a, "--json") {
+            println("{\"version\":\"" + tool_version() + "\",\"name\":\"" + tool_name() + "\"}")
+        } else {
+            println(tool_name() + " v" + tool_version())
+        }
+        return
+    }
+
+    if cmd == "help" {
+        cli_usage()
+        return
+    }
+
+    die(85, "unknown_command", "unknown command \"" + cmd + "\"", "machin-poll help-json")
 }

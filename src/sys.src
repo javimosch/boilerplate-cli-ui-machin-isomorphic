@@ -1,0 +1,5 @@
+// Foreign C functions for CLI/daemon plumbing (libc; no extra linking).
+extern "unistd" {
+    header "unistd.h"
+    fn getpid() i32
+}
