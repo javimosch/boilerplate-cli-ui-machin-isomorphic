@@ -1,0 +1,32 @@
+name: CI
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: build + smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mlugg/setup-zig@v1
+        with:
+          version: 0.16.0
+      - name: Install machin
+        run: curl -fsSL https://raw.githubusercontent.com/javimosch/machin/main/install.sh | sh
+      - run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Build
+        run: ./build.sh
+
+      - name: Smoke test
+        run: ./machin-poll -version || ./machin-poll --help
+
+      - name: Report binary size
+        run: |
+          set -e
+          BIN=$(echo "./machin-poll -version || ./machin-poll --help" | awk '{print $1}')
+          echo "binary=$BIN size=$(stat -c%s "$BIN") bytes"
