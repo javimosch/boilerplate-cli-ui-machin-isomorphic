@@ -9,6 +9,9 @@ jobs:
   build:
     name: build + smoke
     runs-on: ubuntu-latest
+    # A backgrounded server that survives a step can hold the runner
+    # pipe open and wedge the job indefinitely. Fail in minutes.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
