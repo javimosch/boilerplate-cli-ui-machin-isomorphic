@@ -12,11 +12,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 0.16.0 has no tagged release yet, so the setup action 404s on it. The
+      # code targets the 0.16 Io API, so track master rather than pin a
+      # version that cannot be fetched.
       - uses: mlugg/setup-zig@v1
         with:
-          version: 0.16.0
-      - name: Install machin
-        run: curl -fsSL https://raw.githubusercontent.com/javimosch/machin/main/install.sh | sh
+          version: master
+      # Built from source, not installed from the latest release: this
+      # boilerplate binds its listener with listen_on(host, port), which landed
+      # after the newest tagged machin. Switch back to install.sh once a
+      # release carries it.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Build machin from source
+        run: |
+          git clone --depth 1 https://github.com/javimosch/machin /tmp/machin
+          (cd /tmp/machin && go build -o machin .)
+          mkdir -p "$HOME/.local/bin"
+          cp /tmp/machin/machin "$HOME/.local/bin/machin"
       - run: echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Build
