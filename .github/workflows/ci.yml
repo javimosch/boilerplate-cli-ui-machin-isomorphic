@@ -12,12 +12,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 0.16.0 has no tagged release yet, so the setup action 404s on it. The
-      # code targets the 0.16 Io API, so track master rather than pin a
-      # version that cannot be fetched.
-      - uses: mlugg/setup-zig@v1
-        with:
-          version: master
+      # Installed straight from ziglang.org: mlugg/setup-zig 404s on every
+      # mirror it tries, for 0.16.0 and for master alike, and the 0.16 Io API
+      # this code targets is only in 0.16.0.
+      - name: Install Zig 0.16.0
+        run: |
+          curl -fsSL https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz -o /tmp/zig.tar.xz
+          mkdir -p /tmp/zig && tar -xJf /tmp/zig.tar.xz -C /tmp/zig --strip-components=1
+          echo "/tmp/zig" >> $GITHUB_PATH
       # Built from source, not installed from the latest release: this
       # boilerplate binds its listener with listen_on(host, port), which landed
       # after the newest tagged machin. Switch back to install.sh once a
